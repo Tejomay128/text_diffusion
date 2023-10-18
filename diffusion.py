@@ -240,4 +240,45 @@ class Diffusion:
             "pred_x0": pred_x0
         }
     
-    
+    def p_sample(
+        self, model, x_t, t, clip_denoised=True, denoised_fn=None, model_kwargs=None,
+            top_p=None, mask=None, x_start=None,
+    ):
+        """
+        Sample x_{t-1} from the model at the given timestep.
+
+        -> model: the model to sample from.
+        -> x: the current tensor (from timestep t).
+        -> t: the value of t, starting at 0 for the first diffusion step.
+        -> clip_denoised: if True, clip the x_start prediction to [-1, 1].
+        -> denoised_fn: if not None, a function which applies to the
+            x_start prediction before it is used to sample.
+        -> mask: anchoring masked position to x_start
+        -> model_kwargs: if not None, a dict of extra keyword arguments to
+            pass to the model. This can be used for conditioning.
+        """
+        out = self.p_mean_var(x_t, t, 
+                              clip_denoised=clip_denoised, 
+                              denoised_fn=denoised_fn, 
+                              model_kwargs=model_kwargs)
+        
+        if top_p is not None and top_p > 0:
+            # print('top_p sampling')
+            eps = torch.randn_like(x_t)
+            replace_mask = torch.abs(eps) > top_p
+            while replace_mask.any():
+                eps[replace_mask] = torch.randn_like(eps[replace_mask])
+                replace_mask = torch.abs(eps) > top_p
+            assert (torch.abs(eps) <= top_p).all()
+        else:
+            eps = torch.randn_like(x_t)
+        
+        # no noise to be added at t = 0
+        time_zero_mask = (t != 0).float().view(*([1] * len(x_t.shape)))  # matching dimensions with x_t
+        sample = out["mean"] + time_zero_mask * torch.exp(0.5 * out["log_var"]) * eps
+
+        return {
+            "sample": sample,
+            "pred_xstart": out["pred_xstart"],
+            "greedy_mean": out["mean"]
+        }
