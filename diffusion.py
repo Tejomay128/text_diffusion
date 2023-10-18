@@ -398,3 +398,13 @@ class Diffusion:
         ):
             final.append(sample['sample'])
         return final
+    
+    def _get_x_start(self, x_start_mean, std):
+        '''
+        Word embedding projection from {Emb(w)} to {x_0}
+        :param x_start_mean: word embedding
+        :return: x_0
+        '''
+        noise = torch.randn_like(x_start_mean)
+        assert noise.shape == x_start_mean.shape
+        return x_start_mean + std * noise
