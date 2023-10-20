@@ -283,6 +283,62 @@ class Diffusion:
             "greedy_mean": out["mean"]
         }
     
+    def p_sample_loop(
+        self,
+        model,
+        shape,
+        noise=None,
+        clip_denoised=True,
+        denoised_fn=None,
+        model_kwargs=None,
+        device=None,
+        progress=False,
+        top_p=None,
+        clamp_step=None,
+        clamp_first=None,
+        mask=None,
+        x_0=None,
+        gap=1,
+    ):
+        """
+        Generate samples from the model.
+
+        :param model: the model module.
+        :param shape: the shape of the samples, (N, C, H, W).
+        :param noise: if specified, the noise from the encoder to sample.
+                      Should be of the same shape as `shape`.
+        :param clip_denoised: if True, clip x_start predictions to [-1, 1].
+        :param denoised_fn: if not None, a function which applies to the
+            x_start prediction before it is used to sample.
+        :param mask: anchoring masked position to x_start
+        :param clamp_step: in clamp_first mode, choose end clamp step, otherwise starting clamp step
+        :param clamp_first: bool, clamp_first mode
+        :param model_kwargs: if not None, a dict of extra keyword arguments to
+            pass to the model. This can be used for conditioning.
+        :param device: if specified, the device to create the samples on.
+                       If not specified, use a model parameter's device.
+        :param progress: if True, show a tqdm progress bar.
+        :return: a non-differentiable batch of samples.
+        """
+        final = []
+        for sample in self.p_sample_loop_progressive(
+            model,
+            shape,
+            noise=noise,
+            clip_denoised=clip_denoised,
+            denoised_fn=denoised_fn,
+            model_kwargs=model_kwargs,
+            device=device,
+            progress=progress,
+            top_p=top_p,
+            clamp_step=clamp_step,
+            clamp_first=clamp_first,
+            mask=mask,
+            x_0=x_0
+        ):
+            final.append(sample['sample'])
+        return final
+    
     def p_sample_loop_progressive(
         self,
         model,
@@ -341,70 +397,33 @@ class Diffusion:
                     x_start=x_0
                 )
                 yield out
-                sample_x = out["sample"]
-    
-    def p_sample_loop(
-        self,
-        model,
-        shape,
-        noise=None,
-        clip_denoised=True,
-        denoised_fn=None,
-        model_kwargs=None,
-        device=None,
-        progress=False,
-        top_p=None,
-        clamp_step=None,
-        clamp_first=None,
-        mask=None,
-        x_0=None,
-        gap=1,
-    ):
-        """
-        Generate samples from the model.
+                sample_x = out["sample"]    
 
-        :param model: the model module.
-        :param shape: the shape of the samples, (N, C, H, W).
-        :param noise: if specified, the noise from the encoder to sample.
-                      Should be of the same shape as `shape`.
-        :param clip_denoised: if True, clip x_start predictions to [-1, 1].
-        :param denoised_fn: if not None, a function which applies to the
-            x_start prediction before it is used to sample.
-        :param mask: anchoring masked position to x_start
-        :param clamp_step: in clamp_first mode, choose end clamp step, otherwise starting clamp step
-        :param clamp_first: bool, clamp_first mode
-        :param model_kwargs: if not None, a dict of extra keyword arguments to
-            pass to the model. This can be used for conditioning.
-        :param device: if specified, the device to create the samples on.
-                       If not specified, use a model parameter's device.
-        :param progress: if True, show a tqdm progress bar.
-        :return: a non-differentiable batch of samples.
-        """
-        final = []
-        for sample in self.p_sample_loop_progressive(
-            model,
-            shape,
-            noise=noise,
-            clip_denoised=clip_denoised,
-            denoised_fn=denoised_fn,
-            model_kwargs=model_kwargs,
-            device=device,
-            progress=progress,
-            top_p=top_p,
-            clamp_step=clamp_step,
-            clamp_first=clamp_first,
-            mask=mask,
-            x_0=x_0
-        ):
-            final.append(sample['sample'])
-        return final
-    
+
     def _get_x_start(self, x_start_mean, std):
         '''
         Word embedding projection from {Emb(w)} to {x_0}
-        :param x_start_mean: word embedding
+        -> x_start_mean: word embedding
         :return: x_0
         '''
         noise = torch.randn_like(x_start_mean)
         assert noise.shape == x_start_mean.shape
         return x_start_mean + std * noise
+    
+    def discrete_token_loss(self, x_t, get_logits, input_ids, mask=None, truncate=False, t=None):
+        """
+        enforces the predicted x_0 to be closer to actual word embeddings
+        -log(w | x_0)
+        """
+        logits = get_logits(x_t)
+        ce_loss = nn.CrossEntropyLoss(reduction="none")
+        nll = ce_loss(logits.view(-1, logits.size(-1)), input_ids.view(-1)).view(input_ids.shape)
+        # nll is now simply a 1D tensor
+        if mask is not None:
+            nll *= mask
+            nll = nll.sum(dim=-1) / mask.sum(dim=-1)
+        else:
+            nll = nll.mean(dim=-1)
+        
+        return nll
+
