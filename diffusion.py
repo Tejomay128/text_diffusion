@@ -426,4 +426,3 @@ class Diffusion:
             nll = nll.mean(dim=-1)
         
         return nll
-
