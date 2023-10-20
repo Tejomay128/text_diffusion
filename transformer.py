@@ -42,7 +42,7 @@ class TransformerModel(nn.Module):
         self.lm_head = nn.Linear(self.input_dims, vocab_size)
         #weight sharing
         with torch.no_grad():
-            self.lm_head.weight = self.word_embedding.weight
+            self.lm_head.weight = self.word_embedding.weight  #lm-head and word embeddings are shared
         
         time_embed_dim = hidden_t_dim * 4
 
@@ -56,3 +56,60 @@ class TransformerModel(nn.Module):
             self.input_up_proj = nn.Sequential(nn.Linear(input_dims, config.hidden_size),
                                               nn.Tanh(), 
                                               nn.Linear(config.hidden_size, config.hidden_size))
+        
+        if init_pretrained == 'bert':
+            print("Using pretrained BERT weights.....")
+            print(config)
+            lm = BertModel.from_pretrained(config_name, config=config)
+            self.word_embedding = lm.embeddings.word_embeddings  # set word embeddings to pretrained BERT embeddings
+
+            with torch.no_grad():
+                self.lm_head.weight = self.word_embedding.weight  # lm-head and word embeddings are shared
+            
+            self.encoder = lm.encoder
+            self.register_buffer("position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)))
+            self.position_embeddings = lm.embeddings.position_embeddings
+            self.LayerNorm = lm.embeddings.LayerNorm
+
+            del lm.embeddings
+            del lm.pooler
+        
+        elif init_pretrained == 'no':
+            self.encoder = BertEncoder(config=config)
+            self.register_buffer("position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)))
+            self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
+            self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        
+        else:
+            assert False, "Pretrained type not supported."
+        
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+        if self.output_dims != config.hidden_size:
+            self.output_down_proj = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size),
+                                                  nn.Tanh(), 
+                                                  nn.Linear(config.hidden_size, self.output_dims))
+        
+    def get_embeddings_from_input_ids(self, input_ids):
+        return self.word_embedding(input_ids)
+        
+    def get_logits(self, hidden_repr):
+        """
+        Given output hidden representations, obtain logits over the vocabulary
+        """
+        if self.logits_mode == 1:
+            return self.lm_head(hidden_repr)
+        elif self.logits_mode == 2:
+            raise NotImplementedError
+        else:
+            raise NotImplementedError
+    
+    def forward(self, x, timesteps):
+        """
+        Apply the transformer model to an input batch.
+
+        -> x: an [N x seq_len x ...] Tensor of inputs.
+        -> timesteps: a 1-D batch of timesteps.
+        :return: an [N x seq_len x ...] Tensor of outputs.
+        """
+        
