@@ -44,9 +44,9 @@ def _extract_into_tensor(arr, timesteps, broadcast_shape):
     """
     Extract values from a 1-D numpy array for a batch of indices.
 
-    :param arr: the 1-D numpy array.
-    :param timesteps: a tensor of indices into the array to extract.
-    :param broadcast_shape: a larger shape of K dimensions with the batch
+    -> arr: the 1-D numpy array.
+    -> timesteps: a tensor of indices into the array to extract.
+    -> broadcast_shape: a larger shape of K dimensions with the batch
                             dimension equal to the length of timesteps.
     :return: a tensor of shape [batch_size, 1, ...] where the shape has K dims.
     """
@@ -263,7 +263,7 @@ class Diffusion:
                               model_kwargs=model_kwargs)
         
         if top_p is not None and top_p > 0:
-            # print('top_p sampling')
+            # Ensure magnitude of all eps values to be greater than top_p
             eps = torch.randn_like(x_t)
             replace_mask = torch.abs(eps) > top_p
             while replace_mask.any():
@@ -274,12 +274,12 @@ class Diffusion:
             eps = torch.randn_like(x_t)
         
         # no noise to be added at t = 0
-        time_zero_mask = (t != 0).float().view(*([1] * len(x_t.shape)))  # matching dimensions with x_t
+        time_zero_mask = (t != 0).float().view(*([1] * len(x_t.shape)))  # matching number of dimensions with x_t
         sample = out["mean"] + time_zero_mask * torch.exp(0.5 * out["log_var"]) * eps
 
         return {
             "sample": sample,
-            "pred_xstart": out["pred_xstart"],
+            "pred_x0": out["pred_x0"],
             "greedy_mean": out["mean"]
         }
     
