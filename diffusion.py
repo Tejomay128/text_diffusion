@@ -546,4 +546,94 @@ class Diffusion:
             "pred_x0": out_dict["pred_x0"]
         }
 
+    def ddim_sample_loop(
+        self,
+        model,
+        shape,
+        noise=None,
+        clip_denoised=True,
+        denoised_fn=None,
+        model_kwargs=None,
+        device=None,
+        progress=False,
+        top_p=None,
+        clamp_step=None,
+        clamp_first=None,
+        mask=None,
+        x_start=None,
+        gap=1,
+    ):
+        """
+        Generate samples using DDIM sampling (similar to p_sample_loop).
+        -> gap: skipping steps for DDIM sampling
+        """
+        final = []
+        for sample in self.ddim_sample_loop_progressive(
+            model,
+            shape,
+            noise=noise,
+            clip_denoised=clip_denoised,
+            denoised_fn=denoised_fn,
+            model_kwargs=model_kwargs,
+            device=device,
+            progress=progress,
+            mask=mask,
+            x_start=x_start,
+            gap = gap
+        ):
+            final.append(sample['sample'])
+        return final
+    
+    def ddim_sample_loop_progressive(
+        self,
+        model,
+        shape,
+        noise=None,
+        clip_denoised=True,
+        denoised_fn=None,
+        model_kwargs=None,
+        device=None,
+        progress=False,
+        eta=0.0,
+        langevin_fn=None,
+        mask=None,
+        x_start=None,
+        gap=1
+    ):
+        """
+         Use DDIM to sample from the model and yield intermediate samples from
+        each timestep of DDIM.
+
+        Same usage as p_sample_loop_progressive().
+        """
+        if device is None:
+            device = next(model.parameters()).device()
+        assert isinstance(shape, (tuple, list))
+        if noise is not None:
+            sample_x = noise
+        else:
+            sample_x = torch.randn(*shape, device=device)
+        indices = list(range(self.num_timesteps))[::-1][::gap]
+
+        if progress:
+            # Lazy import so that we don't depend on tqdm.
+            from tqdm.auto import tqdm
+            indices = tqdm(indices)
+
+        for idx in indices:
+            t = torch.tensor([idx] * shape[0], device=device)
+            with torch.no_grad():
+                out = self.ddim_sample(
+                    model,
+                    sample_x,
+                    t,
+                    clip_denoised=clip_denoised,
+                    denoised_fn=denoised_fn,
+                    model_kwargs=model_kwargs,
+                    mask=mask,
+                    x_start=x_start
+                )
+                yield out
+                sample_x = out["sample"]
+    
     
