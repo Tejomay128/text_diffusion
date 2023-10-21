@@ -508,4 +508,42 @@ class Diffusion:
             "pred_x0": out_dict["pred_x0"]
         }
     
+    def ddim_reverse_sample(
+        self,
+        model,
+        x_t,
+        t,
+        clip_denoised=True,
+        denoised_fn=None,
+        model_kwargs=None,
+        eta=0.0,
+    ):
+        """
+        Obtain x_t+1 from x_t using the DDIM equation used in ddim_sample.
+        To do this, eta must be zero, which makes the process deterministic and allows us to exactly
+        calculate x_t+1
+        """
+        assert eta == 0.0, "Non-zero eta value won't give exact x_t+1 computation."
+        out_dict = self.p_mean_var(
+            model,
+            x_t,
+            t,
+            clip_denoised=clip_denoised,
+            denoised_fn=denoised_fn,
+            model_kwargs=model_kwargs,
+        )
+
+        eps = self.predict_eps_from_x0(x_t, t, out_dict["pred_x0"])
+        alpha_bar_next = _extract_into_tensor(self.alpha_bar_next, t, x_t.shape)
+
+        pred_mean = (
+            out_dict["pred_xstart"] * torch.sqrt(alpha_bar_next)
+            + torch.sqrt(1 - alpha_bar_next) * eps
+        )
+
+        return {
+            "sample":pred_mean, 
+            "pred_x0": out_dict["pred_x0"]
+        }
+
     
