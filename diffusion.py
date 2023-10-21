@@ -193,9 +193,9 @@ class Diffusion:
             pass to the model. This can be used for conditioning.
         :return: a dict with the following keys:
                  - 'mean': the model mean output.
-                 - 'variance': the model variance output.
-                 - 'log_variance': the log of 'variance'.
-                 - 'pred_xstart': the prediction for x_0. 
+                 - 'var': the model variance output.
+                 - 'log_var': the log of 'variance'.
+                 - 'pred_x0': the prediction for x_0. 
         """
         if model_kwargs is None:
             model_kwargs = {}
@@ -272,9 +272,12 @@ class Diffusion:
             assert (torch.abs(eps) <= top_p).all()
         else:
             eps = torch.randn_like(x_t)
-        
-        # no noise to be added at t = 0
-        time_zero_mask = (t != 0).float().view(*([1] * len(x_t.shape)))  # matching number of dimensions with x_t
+
+        """
+        no noise to be added at t = 0
+        matching number of dimensions with x_t
+        """
+        time_zero_mask = (t != 0).float().view(-1, *([1] * (len(x_t.shape) - 1)))  
         sample = out["mean"] + time_zero_mask * torch.exp(0.5 * out["log_var"]) * eps
 
         return {
@@ -426,3 +429,83 @@ class Diffusion:
             nll = nll.mean(dim=-1)
         
         return nll
+
+    def training_loss(self, model, x_0, t, model_kwargs=None, noise=None):
+        """
+        Compute training loss for a single pass
+        -> model: the model to evaluate loss on.
+        -> x_start: the [N x seq_len x ...] tensor of inputs. # not used unless fixing the input embeddings
+        -> t: a batch of timestep indices.
+        -> model_kwargs: if not None, a dict of extra keyword arguments to
+            pass to the model. This can be used for conditioning.
+        -> noise: if specified, the specific Gaussian noise to try to remove.
+        :return: a dict with the key "loss" containing a tensor of shape [N].
+                 Some mean or variance settings may also have other keys.
+        """
+        pass
+
+    def ddim_sample(
+        self,
+        model,
+        x_t,
+        t,
+        clip_denoised=True,
+        denoised_fn=None,
+        model_kwargs=None,
+        eta=0.0,
+        langevin_fn=None,
+        mask=None,
+        x_start=None
+    ):
+        """
+        Similar to p_sample, sample x_t-1 using DDIM
+        -> eta: Controls the stochasticity of the sampling process. 
+                Setting it to zero makes the process deterministic.
+        """
+        out_dict = self.p_mean_var(
+            model,
+            x_t,
+            t,
+            clip_denoised=clip_denoised,
+            denoised_fn=denoised_fn,
+            model_kwargs=model_kwargs,
+        )
+
+        eps = self.predict_eps_from_x0(x_t, t, out_dict["pred_x0"])
+        alpha_bar = _extract_into_tensor(self.alpha_bar, t, x_t.shape)
+        alpha_bar_prev = _extract_into_tensor(self.alpha_bar_prev, t, x_t.shape)
+
+        """
+        Refer to section 4.1 from the "Denoising Diffusion Implicit Models" paper
+        for obtaining sample (x_t-1)
+        """
+        sigma = eta * torch.sqrt((1 - alpha_bar_prev) / (1 - alpha_bar) * (1 - alpha_bar / alpha_bar_prev))
+
+        """
+        noise is different from eps, 
+        noise adds stochasticity to the sampling process while eps is the predicted noise.
+        """
+        noise = torch.randn_like(x_t)  
+
+        pred_mean = (
+            torch.sqrt(alpha_bar_prev) * out_dict["pred_x0"] +
+            torch.sqrt(1 - alpha_bar_prev - sigma**2) * eps
+        )
+        """
+        no noise to be added at t = 0
+        matching number of dimensions with x_t
+        """
+        time_zero_mask = (t != 0).float().view(-1, *([1] * (len(x_t.shape) - 1)))  
+        sample = pred_mean + time_zero_mask * sigma * noise
+
+        #ADD LANGEVIN FUNCTION HERE
+
+        if mask is not None:
+            sample = torch.where(mask==0, x_start, sample)
+        
+        return {
+            "sample": sample,
+            "pred_x0": out_dict["pred_x0"]
+        }
+    
+    
