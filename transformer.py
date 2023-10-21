@@ -112,4 +112,4 @@ class TransformerModel(nn.Module):
         -> timesteps: a 1-D batch of timesteps.
         :return: an [N x seq_len x ...] Tensor of outputs.
         """
-        
+            
