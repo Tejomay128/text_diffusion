@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+from nn_utils import timestep_embedding
+
 class TransformerModel(nn.Module):
     """
     Transformer model class with an LM head same as the embedding matrix which maps
@@ -108,8 +110,35 @@ class TransformerModel(nn.Module):
         """
         Apply the transformer model to an input batch.
 
-        -> x: an [N x seq_len x ...] Tensor of inputs.
+        -> x: an [B x seq_len x ...] Tensor of inputs.
         -> timesteps: a 1-D batch of timesteps.
-        :return: an [N x seq_len x ...] Tensor of outputs.
+        :return: an [B x seq_len x ...] Tensor of outputs.
         """
-            
+        # obtain time embedding of dimensions N X hidden_t_dim
+        emb_t = self.time_embed(timestep_embedding(timesteps, self.hidden_t_dim))    
+        
+        if self.input_dims != self.hidden_size:
+            emb_x = self.input_up_proj(x)
+        else:
+            emb_x = x
+        
+        seq_len = x.size(1)
+        position_ids = self.position_ids[:, :seq_len]
+
+        """
+        position_ids -> [B X seq_len] -> convert to embeddings -> [B X seq_len X hidden_size]
+        emb_x -> [B X seq_len X hidden_size]
+        emb_t -> [B X hidden_size] -> reshape and expand it to [B X seq_len X hidden_size]
+        """
+        emb_inputs = self.position_embeddings(position_ids) + \
+                        emb_x + \
+                        emb_t.unsqueeze(1).expand(-1, seq_len, 1)
+        
+        output_embeddings = self.encoder(emb_inputs).last_hidden_state
+        
+        if self.output_dims != self.hidden_size:
+            output_embeddings = self.output_down_proj(output_embeddings)
+        
+        output_embeddings = output_embeddings.type(x.dtype)
+
+        return output_embeddings
