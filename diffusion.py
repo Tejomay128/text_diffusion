@@ -635,5 +635,126 @@ class Diffusion:
                 )
                 yield out
                 sample_x = out["sample"]
+
+   
+def spaced_timesteps(num_steps, section_counts):
+    """
+    Create a list of timesteps to use from an original diffusion process,
+    given the number of timesteps we want to take from equally-sized portions
+    of the original process.
+
+    For example, if there's 300 timesteps and the section counts are [10,15,20]
+    then the first 100 timesteps are strided to be 10 timesteps, the second 100
+    are strided to be 15 timesteps, and the final 100 are strided to be 20.
+
+    If the stride is a string starting with "ddim", then the fixed striding
+    from the DDIM paper is used, and only one section is allowed.
+
+    -> num_timesteps: the number of diffusion steps in the original
+                          process to divide up.
+    -> section_counts: either a list of numbers, or a string containing
+                           comma-separated numbers, indicating the step count
+                           per section. As a special case, use "ddimN" where N
+                           is a number of steps to use the striding from the
+                           DDIM paper.
+    :return: a set of diffusion steps from the original process to use.
+    """
+    if isinstance(section_counts, str):
+        # special case for ddimN
+        if section_counts.startswith("ddim"):
+            count = int(section_counts[len("ddim"):])
+            for i in range(1, num_steps):
+                if len(range(0, num_steps, i)) == count:
+                    return set(range(0, num_steps, i))
+            raise ValueError(
+                f"cannot create exactly {num_steps} steps with an integer stride"
+            )
+        
+        section_counts = [int(x) for x in section_counts.split(",")]
+    # divide into equal sections
+    size_per_section = num_steps // len(section_counts)
+    extra = num_steps % len(section_counts)
+    start_idx = 0
+    all_steps = []
+    for i, section_count in enumerate(section_counts):
+        size = size_per_section + (1 if i < extra else 0)
+        if size < section_count:
+            raise ValueError(
+                f"cannot divide section of {size} steps into {section_count}"
+            )
+        #define a fractional value as stride
+        if section_count <= 1:
+            frac_stride = 1
+        else:
+            frac_stride = (size - 1) / (section_count - 1)
+        cur_idx = 0.0
+        taken_steps = []
+        # generate timesteps by striding starting from 0.0
+        for _ in range(section_count):
+            taken_steps.append(start_idx + round(cur_idx))
+            cur_idx += frac_stride
+        all_steps += taken_steps
+        start_idx += size
+    return set(all_steps)
+
+
+class _WrappedModel:
+    """
+    Wrapper class to wrap NN to adjust to resampled timesteps
+    """
+    def __init__(self, model, timestep_map, rescale_timesteps, original_num_steps):
+        self.model = model
+        self.timestep_map = timestep_map
+        self.rescale_timesteps = rescale_timesteps
+        self.original_num_steps = original_num_steps
+
+    def __call__(self, x, ts, **kwargs):
+        map_tensor = torch.tensor(self.timestep_map, device=ts.device, dtype=ts.dtype)
+        new_ts = map_tensor[ts]
+        if self.rescale_timesteps:
+            new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
+        return self.model(x, new_ts, **kwargs)
+
+
+class SpacedDiffusion(Diffusion):
+    """
+    Create a diffusion process with spaced timesteps
+    -> spaced_timesteps: a collection (sequence or set) of timesteps from the
+                    original diffusion process to retain.
+    -> kwargs: the kwargs to create the base diffusion process.
+    """
+    def __init__(self, space_timesteps, **kwargs):
+        self.use_timesteps = set(space_timesteps)
+        self.timestep_map = []
+        self.original_num_steps = len(kwargs["betas"])
+
+        base_diffusion = Diffusion(**kwargs)
+        last_alpha_bar = 1.0
+        new_betas = []
+        """
+        Use the resampled timesteps to obtain new betas from alphas.
+        Create a timestep map that maps timesteps to the sampled ones from original diffusion.
+        """
+        for i, alpha_bar in enumerate(base_diffusion.alpha_bar):
+            if i in self.use_timesteps:
+                new_betas.append(1 - alpha_bar / last_alpha_bar)
+                last_alpha_bar = alpha_bar
+                self.timestep_map.append(i)
+        
+        kwargs["betas"] = np.array(new_betas)
+        super().__init__(**kwargs)
+
+    def _wrap_model(self, model):
+        if isinstance(model, _WrappedModel):
+            return model
+        else:
+            return _WrappedModel(model,
+                                self.timestep_map, 
+                                self.rescale_timesteps, 
+                                self.original_num_steps)
     
+    def p_mean_var(self, model, x_t, t, clip_denoised=True, denoised_fn=None, model_kwargs=None):
+        return super().p_mean_var(self._wrap_model(model), x_t, t, clip_denoised, denoised_fn, model_kwargs)
     
+    def training_loss(self, model, x_0, t, model_kwargs=None, noise=None):
+        return super().training_loss(self._wrap_model(model), x_0, t, model_kwargs, noise)
