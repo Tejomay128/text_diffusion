@@ -5,8 +5,9 @@ import numpy as np
 
 def get_knn(model_emb:torch.Tensor, text_emb:torch.Tensor, dist='cos'):
     """
-    model_emb -> [V X d]
-    text_emb -> [B X seq_len X d]
+    model_emb -> [V X d] -> Embeddings from the denoising model that correspond
+    to some token.
+    text_emb -> [B X seq_len X d] -> Typically, an output from a diffusion step
     """
     if dist == 'cos':
         sim = model_emb @ text_emb.transpose(1, 0).to(model_emb.device)
@@ -18,8 +19,9 @@ def get_knn(model_emb:torch.Tensor, text_emb:torch.Tensor, dist='cos'):
 
 def get_knn_efficient(model_emb:torch.Tensor, text_emb:torch.Tensor):
     """
-    model_emb -> [V X d]
-    text_emb -> [B X seq_len X d]
+    model_emb -> [V X d] -> Embeddings from the denoising model that correspond
+    to some token.
+    text_emb -> [B X seq_len X d] -> Typically, an output from a diffusion step
     """
     model_emb_norm = (model_emb ** 2).sum(-1).view(-1, 1)   # [V, 1]
     text_emb_t = torch.transpose(text_emb.view(-1, text_emb.size(-1)), 0, 1) # [d X B*seq_len]
