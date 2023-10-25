@@ -32,4 +32,45 @@ def get_knn_efficient(model_emb:torch.Tensor, text_emb:torch.Tensor):
     return topk_output.values, topk_output.indices
 
 def rounding_function(text_emb_list, model, tokenizer, emb_scale_factor=1.0):
-    pass
+    """
+    Given a list of embeddings, rounds each embedding to the nearest token
+    """
+    decoded_out_lst = []
+    model_emb = model.weight
+    dist = 'l2'
+    
+    for text_emb in text_emb_list:
+        text_emb = torch.tensor(text_emb)
+        if len(text_emb.shape) > 2:
+            text_emb = text_emb.view(-1, text_emb.size(-1)) # [B*seq_len X d]
+        else:
+            text_emb = text_emb
+        val, indices = get_knn(model_emb,
+                                text_emb.to(model_emb.device), dist=dist)
+    
+        decoded_out_lst.append(tokenizer.decode_token(indices[0]))
+
+    return decoded_out_lst
+
+
+def denoised_fn_round(args, model, text_emb, t):
+    """
+    Round off text embeddings obtained from diffusion model to the nearest embedding
+    that maps back to a token.
+    text_emb -> [B X seq_len X d] -> Typically, an output from a diffusion step
+    model -> provides embeddings that map to some existing token
+    """
+    model_emb = model.weight  # input_embs
+    old_shape = text_emb.shape
+    old_device = text_emb.device
+
+    if len(text_emb.shape) > 2:
+        text_emb = text_emb.reshape(-1, text_emb.size(-1)) # [B*seq_len X d]
+    else:
+        text_emb = text_emb
+    # val, indices = get_knn(model_emb, text_emb.to(model_emb.device), dist=dist)
+    val, indices = get_knn_efficient(model_emb, text_emb.to(model_emb.device))
+    rounded_tokens = indices[0]
+    new_embeds = model(rounded_tokens).view(old_shape).to(old_device)
+
+    return new_embeds
