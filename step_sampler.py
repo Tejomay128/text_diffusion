@@ -12,8 +12,8 @@ def create_named_schedule_sampler(name, diffusion):
     """
     Create a ScheduleSampler from a library of pre-defined samplers.
 
-    :param name: the name of the sampler.
-    :param diffusion: the diffusion object to sample for.
+    -> name: the name of the sampler.
+    -> diffusion: the diffusion object to sample for.
     """
     if name == "uniform":
         return UniformSampler(diffusion)
@@ -48,8 +48,8 @@ class ScheduleSampler(ABC):
         """
         Importance-sample timesteps for a batch.
 
-        :param batch_size: the number of timesteps.
-        :param device: the torch device to save to.
+        -> batch_size: the number of timesteps.
+        -> device: the torch device to save to.
         :return: a tuple (timesteps, weights):
                  - timesteps: a tensor of timestep indices.
                  - weights: a tensor of weights to scale the resulting losses.
@@ -77,7 +77,7 @@ class FixSampler(ScheduleSampler):
         self.diffusion = diffusion
 
         ###############################################################
-        ### You can custome your own sampling weight of steps here. ###
+        ###  You can custom your own sampling weight of steps here. ###
         ###############################################################
         self._weights = np.concatenate([np.ones([diffusion.num_timesteps//2]), np.zeros([diffusion.num_timesteps//2]) + 0.5])
 
@@ -95,8 +95,8 @@ class LossAwareSampler(ScheduleSampler):
         This method will perform synchronization to make sure all of the ranks
         maintain the exact same reweighting.
 
-        :param local_ts: an integer Tensor of timesteps.
-        :param local_losses: a 1D Tensor of losses.
+        -> local_ts: an integer Tensor of timesteps.
+        -> local_losses: a 1D Tensor of losses.
         """
         batch_sizes = [torch.tensor([0], dtype=torch.int32, device=local_ts.device) 
                        for _ in range(dist.get_world_size())
@@ -129,8 +129,8 @@ class LossAwareSampler(ScheduleSampler):
         ranks with identical arguments. Thus, it should have deterministic
         behavior to maintain state across workers.
 
-        :param ts: a list of int timesteps.
-        :param losses: a list of float losses, one per timestep.
+        -> ts: a list of int timesteps.
+        -> losses: a list of float losses, one per timestep.
         """
 
 
