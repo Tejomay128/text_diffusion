@@ -50,7 +50,7 @@ def load_data_text(
         data_loader = DataLoader(
             dataset,
             batch_size=batch_size,
-            shuffle=not deterministic
+            shuffle=not deterministic,
             num_workers=4
         )
 
