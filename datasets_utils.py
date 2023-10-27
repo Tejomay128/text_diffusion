@@ -40,11 +40,19 @@ def load_data_text(
         data_args,
         model_emb=model_emb
     )
-    data_loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        num_workers=4
-    )
+    if split != 'test':
+        data_loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            num_workers=4
+        )
+    else:
+        data_loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=not deterministic
+            num_workers=4
+        )
 
     if loop:
         return infinite_loader(data_loader)
@@ -173,7 +181,6 @@ def helper_tokenize(sent_list, vocab_dict, seq_len):
     return raw_datasets
 
 
-
 def _collate_batch_helper(examples, pad_token_id, max_length, return_mask=False):
     """
     pad the inputs and the corrsponding masks till max_length
@@ -187,6 +194,7 @@ def _collate_batch_helper(examples, pad_token_id, max_length, return_mask=False)
     if return_mask:
         return result, mask_
     return result
+
 
 class TextDataset(Dataset):
     def __init__(self, text_datasets, data_args, model_emb=None):
