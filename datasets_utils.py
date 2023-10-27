@@ -35,6 +35,26 @@ def load_data_text(
     print("Loading text data", "."*10)
 
     training_data = get_corpus(data_args, seq_len, split=split, loaded_vocab=loaded_vocab)
+    dataset = TextDataset(
+        training_data,
+        data_args,
+        model_emb=model_emb
+    )
+    data_loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=4
+    )
+
+    if loop:
+        return infinite_loader(data_loader)
+    else:
+        return iter(data_loader)
+
+
+def infinite_loader(data_loader):
+    while True:
+        yield from data_loader
 
 
 def get_corpus(data_args, seq_len, split='train', loaded_vocab=None):
@@ -104,11 +124,11 @@ def helper_tokenize(sent_list, vocab_dict, seq_len):
         lst = []
         mask = []
         for i in range(len(group_lst['input_id_x'])):
-            end_token = group_lst['input_id_x'][i][-1]
+            end_token = group_lst['input_id_x'][i][-1] # keep the end token marker separate
             src = group_lst['input_id_x'][i][:-1]
             trg = group_lst['input_id_y'][i][:-1]
             """
-            go on popping from the end of the source and target sentences one by one till
+            Go on popping from the end of the source and target sentences one by one till
             combined length of source and target = seq_len-3 is reached
             """
             while len(src) + len(trg) > seq_len - 3:
@@ -127,3 +147,69 @@ def helper_tokenize(sent_list, vocab_dict, seq_len):
         group_lst['input_ids'] = lst
         group_lst['input_mask'] = mask
         return group_lst
+    
+    tokenized_datasets = tokenized_datasets.map(
+        merge_and_mask,
+        batched=True,
+        num_proc=1,
+        desc=f"merge and mask",
+    )
+
+    def pad_function(group_list):
+        max_len = seq_len
+        group_list['input_ids'] = _collate_batch_helper(group_list['input_ids'], vocab_dict.pad_token_id, max_len)
+        group_list['input_mask'] = _collate_batch_helper(group_list['input_mask'], 1, max_len)
+        return group_list
+    
+    lm_datasets = tokenized_datasets.map(
+        pad_function,
+        batched=True,
+        num_proc=1,
+        desc=f"padding",
+    )
+
+    raw_datasets = datasets.DatasetDict()
+    raw_datasets['train'] = lm_datasets
+    return raw_datasets
+
+
+
+def _collate_batch_helper(examples, pad_token_id, max_length, return_mask=False):
+    """
+    pad the inputs and the corrsponding masks till max_length
+    """
+    result = torch.full([len(examples), max_length], pad_token_id, dtype=torch.int64).tolist()
+    mask_ = torch.full([len(examples), max_length], pad_token_id, dtype=torch.int64).tolist()
+    for i, example in enumerate(examples):
+        curr_len = min(len(example), max_length)
+        result[i][:curr_len] = example[:curr_len]
+        mask_[i][:curr_len] = [1] * curr_len
+    if return_mask:
+        return result, mask_
+    return result
+
+class TextDataset(Dataset):
+    def __init__(self, text_datasets, data_args, model_emb=None):
+        super().__init__()
+        self.text_datasets = text_datasets
+        self.length = len(self.text_datasets['train'])
+        self.data_args = data_args
+        self.model_emb = model_emb
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        with torch.no_grad():
+
+            input_ids = self.text_datasets['train'][idx]['input_ids']
+            hidden_state = self.model_emb(torch.tensor(input_ids))
+
+            # obtain the input vectors, only used when word embedding is fixed (not trained end-to-end)
+            arr = np.array(hidden_state, dtype=np.float32)
+
+            out_kwargs = {}
+            out_kwargs['input_ids'] = np.array(self.text_datasets['train'][idx]['input_ids'])
+            out_kwargs['input_mask'] = np.array(self.text_datasets['train'][idx]['input_mask'])
+
+            return arr, out_kwargs
