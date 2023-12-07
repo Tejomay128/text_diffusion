@@ -150,6 +150,9 @@ class LossSecondMomentReSampler(LossAwareSampler):
         self._loss_counts = np.zeros([diffusion.num_steps], dtype=np.int)
 
     def _warmed_up(self):
+        """
+        checking if the history is built till the "history_per_term" argument
+        """
         return (self._loss_counts == self.history_per_term).all()
 
     def weights(self):

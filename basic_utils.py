@@ -45,10 +45,16 @@ class myTokenizer():
         return tokens
 
 
+def load_tokenizer(args):
+    tokenizer = myTokenizer(args)
+    return tokenizer
+
 def load_model_emb(args, tokenizer):
     """
     Load random embeddings or predefined ones
     """
+    embs = torch.nn.Embedding(tokenizer.vocab_size, args.hidden_dim)
+    return embs, tokenizer
 
 
 def load_defaults_config():
